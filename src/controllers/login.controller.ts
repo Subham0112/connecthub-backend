@@ -64,7 +64,7 @@ export const register = async (req:Request, res:Response)=>{
                 token_version:user.token_version
             },
             String(process.env.ACCESS_SECRET),
-            {expiresIn:"15m"}
+            {expiresIn:"1m"}
         )
         const refreshToken=jwt.sign(
             {
@@ -73,7 +73,7 @@ export const register = async (req:Request, res:Response)=>{
                 token_version:user.token_version
             },
            String(process.env.REFRESH_SECRET),
-            {expiresIn:"5h"}
+            {expiresIn:"2m"}
         )
      
         await prisma.users.update({
@@ -142,7 +142,7 @@ export const login = async (req:Request ,res:Response )=>{
                 token_version:findUser.token_version
             },
             String(process.env.ACCESS_SECRET),
-            {expiresIn:"15m"}
+            {expiresIn:"1m"}
         )
         const refreshToken=jwt.sign(
             {
@@ -151,7 +151,7 @@ export const login = async (req:Request ,res:Response )=>{
                 token_version:findUser.token_version
             },
            String(process.env.REFRESH_SECRET),
-            {expiresIn:"5h"}
+            {expiresIn:"2m"}
         )
      
         await prisma.users.update({
@@ -231,7 +231,6 @@ export const getUser = async (req: Request, res: Response) => {
     if (!user) {
       return res.status(404).json({ message: "User Not Found" });
     }
-
     res.status(200).json({ message: "User fetched successfully", user });
   } catch (err) {
     console.error("Error fetching profile", err);
@@ -274,7 +273,7 @@ export const refreshToken = async (req:Request,res:Response)=>{
     try{
         const refreshToken=req.cookies.refreshtoken;
         if(!refreshToken){
-            return res.status(404).json({
+            return res.status(401).json({
                 message: "No refresh token found"
             })
         }
@@ -304,7 +303,7 @@ export const refreshToken = async (req:Request,res:Response)=>{
                 token_version:findUser.token_version
             },
             String(process.env.ACCESS_SECRET),
-            {expiresIn:"15m"}
+            {expiresIn:"1m"}
         )
         res.cookie("accesstoken",newAccessToken,{
              httpOnly:true,

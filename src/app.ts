@@ -9,6 +9,7 @@ import dotenv from "dotenv";
 import cookieParser from "cookie-parser";
 import { userRouter } from "./routes/auth.route.js";
 import { postRouter } from "./routes/posts.route.js";
+import { friendRouter } from "./routes/friends.route.js";
 import path from "path";
 import { fileURLToPath } from "url";
 import { messageRouter } from "./routes/message.route.js";
@@ -17,7 +18,7 @@ dotenv.config();
 const app:Express= express();
  const httpServer=createServer(app)
 
- const io= new Server(httpServer,{
+ export const io= new Server(httpServer,{
     cors:{
         origin:true,
         credentials:true
@@ -25,15 +26,19 @@ const app:Express= express();
  })
 
  
-const userSocketMap = new Map<number, string>()
+const userSocketMap = new Map<number, Set<string>>()
 
 io.on("connection", (socket) => {
   console.log("User Connected", socket.id)
 
   socket.on("join", (userId: number) => {
     socket.join(`user_${userId}`)
-    userSocketMap.set(Number(userId), socket.id)  // ← track socket
-    console.log(`User ${userId} joined the room`)
+    
+    if (!userSocketMap.has(Number(userId))) {
+      userSocketMap.set(Number(userId), new Set())
+    }
+    userSocketMap.get(Number(userId))!.add(socket.id)
+    console.log(`User ${userId} joined — sockets:`, [...userSocketMap.get(Number(userId))!])
   })
 
   socket.on("send_message", async (data) => {
@@ -61,22 +66,26 @@ io.on("connection", (socket) => {
     const { receiverId, senderId } = data
     io.to(`user_${receiverId}`).emit("user_stop_typing", { senderId })
   })
-
- socket.on("messages_read", (data) => {
-  console.log("SERVER messages_read — data:", data)
-  const senderSocketId = userSocketMap.get(Number(data.senderId))
-  console.log("senderSocketId found:", senderSocketId ?? "NOT IN MAP")
-  console.log("userSocketMap contents:", [...userSocketMap.entries()])
-  if (senderSocketId) {
-    io.to(senderSocketId).emit("messages_read", { readerId: data.readerId })
-    console.log("Emitted messages_read to:", senderSocketId)
-  }
-})
+  socket.on("messages_read", (data) => {
+    const senderSockets = userSocketMap.get(Number(data.senderId))
+    if (senderSockets) {
+      for (const sid of senderSockets) {
+        io.to(sid).emit("messages_read", { readerId: data.readerId })
+      }
+      console.log(`Emitted messages_read to ${senderSockets.size} socket(s) for user ${data.senderId}`)
+    } else {
+      console.log(`No sockets found for user ${data.senderId}`)
+    }
+  })
 
   socket.on("disconnect", () => {
-    for (const [userId, sid] of userSocketMap.entries()) {
-      if (sid === socket.id) {
-        userSocketMap.delete(userId)
+    // Remove only this specific socket from all user entries
+    for (const [userId, sockets] of userSocketMap.entries()) {
+      if (sockets.has(socket.id)) {
+        sockets.delete(socket.id)
+        if (sockets.size === 0) {
+          userSocketMap.delete(userId)
+        }
         break
       }
     }
@@ -101,6 +110,7 @@ app.use("/uploads", express.static(path.join(__dirname, "../src/uploads")))
 app.use("/",userRouter)
 app.use("/",postRouter)
 app.use("/",messageRouter)
+app.use("/",friendRouter)
 
 AppDataSource.initialize()
   .then(() => {

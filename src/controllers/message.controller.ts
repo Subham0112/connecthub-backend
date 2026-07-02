@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import prisma from "../config/prisma.js";
+import { io } from "../app.js";
 
 export const sendMessage = async (req: Request, res: Response) => {
   const { message, recieverId } = req.body;
@@ -41,6 +42,8 @@ export const sendMessage = async (req: Request, res: Response) => {
 };
 
 export const getMessages = async (req: Request, res: Response) => {
+  const limit = 8;
+const before = req.query.before as string | undefined;
   const userId = req.user?.userId;
   const { otherUserId } = req.params;
 
@@ -55,14 +58,20 @@ export const getMessages = async (req: Request, res: Response) => {
           { sender_id: Number(userId), receiver_id: Number(otherUserId) },
           { sender_id: Number(otherUserId), receiver_id: Number(userId) },
         ],
+        ...(before && {
+      id: {
+        lt: Number(before),
       },
-      orderBy: { created_at: "asc" },
+    })
+      },
+      orderBy: { created_at: "desc" },
+      take:limit
     });
 
-    return res.status(200).json({
-      message: "Messages Fetched",
-      data: messages,
-    });
+   return res.json({
+    data: messages.reverse(),
+    hasMore: messages.length === limit,
+});
   } catch (err) {
     console.log(err);
     return res.status(500).json({ message: "Internal Server Error" });
@@ -135,6 +144,9 @@ try{
   const deleteMessage=await prisma.messages.delete({
     where:{id:Number(chatId)}
   })
+  io.to(`user_${findChat.receiver_id}`).emit("message_deleted", {
+  messageId: Number(chatId),
+});
   return res.status(200).json({
     message:"Chat deleted Successfully"
   })

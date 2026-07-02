@@ -8,7 +8,7 @@ export const verifyToken = async (req: Request,res: Response,next: NextFunction)
   const token = req.cookies.accesstoken;
 
   if (!token) {
-    return res.status(404).json({
+    return res.status(401).json({
       message: "No access token found",
     });
   }
@@ -34,8 +34,22 @@ const findUser=await prisma.users.findFirst({
    req.user=decoded;
     next();
   } catch (err) {
-    return res.status(500).json({
-      message: "Internal Server Error",
+    if (err instanceof jwt.TokenExpiredError) {
+    return res.status(401).json({
+      message: "Access token expired",
     });
+  }
+
+  if (err instanceof jwt.JsonWebTokenError) {
+    return res.status(401).json({
+      message: "Invalid access token",
+    });
+  }
+
+  console.error(err);
+
+  return res.status(500).json({
+    message: "Internal Server Error",
+  });
   }
 };
