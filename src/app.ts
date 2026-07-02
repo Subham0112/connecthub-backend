@@ -1,7 +1,6 @@
 import express from "express";
 import type { Express} from "express";
 import "reflect-metadata";
-import { AppDataSource } from "./config/data-source.js";
 import { createServer } from "http"; 
 import { Server } from "socket.io";  
 import cors from "cors";
@@ -112,14 +111,6 @@ app.use("/",postRouter)
 app.use("/",messageRouter)
 app.use("/",friendRouter)
 
-AppDataSource.initialize()
-  .then(() => {
-    console.log("Database Connected");
-
-    httpServer.listen(port, () => {
-      console.log("Server running");
-    });
-  })
-  .catch((err) => {
-    console.error(err);
-  });
+app.listen(port, () => {
+  console.log(`Server is running on port ${port}`);
+});
