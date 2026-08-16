@@ -64,7 +64,7 @@ export const register = async (req:Request, res:Response)=>{
                 token_version:user.token_version
             },
             String(process.env.ACCESS_SECRET),
-            {expiresIn:"1m"}
+            {expiresIn:"1h"}
         )
         const refreshToken=jwt.sign(
             {
@@ -73,7 +73,7 @@ export const register = async (req:Request, res:Response)=>{
                 token_version:user.token_version
             },
            String(process.env.REFRESH_SECRET),
-            {expiresIn:"2m"}
+            {expiresIn:"7d"}
         )
      
         await prisma.users.update({
@@ -142,7 +142,7 @@ export const login = async (req:Request ,res:Response )=>{
                 token_version:findUser.token_version
             },
             String(process.env.ACCESS_SECRET),
-            {expiresIn:"1m"}
+            {expiresIn:"1h"}
         )
         const refreshToken=jwt.sign(
             {
@@ -151,7 +151,7 @@ export const login = async (req:Request ,res:Response )=>{
                 token_version:findUser.token_version
             },
            String(process.env.REFRESH_SECRET),
-            {expiresIn:"2m"}
+            {expiresIn:"7d"}
         )
      
         await prisma.users.update({
@@ -303,7 +303,7 @@ export const refreshToken = async (req:Request,res:Response)=>{
                 token_version:findUser.token_version
             },
             String(process.env.ACCESS_SECRET),
-            {expiresIn:"1m"}
+            {expiresIn:"1h"}
         )
         res.cookie("accesstoken",newAccessToken,{
              httpOnly:true,
