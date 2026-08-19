@@ -117,32 +117,60 @@ export const getAllPost = async (req: Request, res: Response) => {
   const skip = (page - 1) * limit;
 
   try {
+    // ── Engagement-based feed ranking (Facebook-like) ──────────────────
+    // score = 3*likes + 4*comments + recencyBoost
+    // recencyBoost = 50 * 0.5^(ageHours / 12)  → halves every 12 hours
+    // Fresh posts start with a boost of ~50, engagement pushes them up,
+    // and old posts decay away unless they keep getting engagement.
+    const ranked = await prisma.$queryRaw<{ id: number; score: number }[]>`
+      SELECT p.id,
+        (
+          COUNT(DISTINCT l.user_id) * 3.0
+          + COUNT(DISTINCT c.id) * 4.0
+          + EXP(-EXTRACT(EPOCH FROM (NOW() - COALESCE(p.created_at, NOW()))) * LN(2) / 43200.0) * 50.0
+        )::float8 AS "score"
+      FROM posts p
+      LEFT JOIN likes l ON l.post_id = p.id
+      LEFT JOIN comments c ON c.post_id = p.id
+      WHERE p.visiblity = 'all'
+      GROUP BY p.id
+      ORDER BY "score" DESC, p.id DESC
+      LIMIT ${limit} OFFSET ${skip}
+    `;
+
+    const scoreMap = new Map(ranked.map((r) => [r.id, r.score]));
+    const ids = ranked.map((r) => r.id);
+
     const [posts, totalCount] = await Promise.all([
-      prisma.posts.findMany({
-        where: { visiblity: "all" },
-        include: {
-          media: true,
-          users: true,
-          _count: { select: { likes: true, comments: true } },
-          likes: {
-            where: { user_id: Number(userId) },
-            select: { user_id: true },
-          },
-        },
-        orderBy: { id: "desc" },
-        skip,
-        take: limit,
-      }),
+      ids.length > 0
+        ? prisma.posts.findMany({
+            where: { id: { in: ids } },
+            include: {
+              media: true,
+              users: true,
+              _count: { select: { likes: true, comments: true } },
+              likes: {
+                where: { user_id: Number(userId) },
+                select: { user_id: true },
+              },
+            },
+          })
+        : Promise.resolve([]),
       prisma.posts.count({ where: { visiblity: "all" } }),
     ]);
-    const formatted = posts.map((post) => ({
-      ...post,
-      likeCount: post._count.likes,
-      commentCount: post._count.comments,
-      likedByCurrentUser: post.likes.length > 0,
-      likes: undefined,
-      _count: undefined,
-    }));
+
+    const formatted = posts
+      .map((post) => ({
+        ...post,
+        likeCount: post._count.likes,
+        commentCount: post._count.comments,
+        likedByCurrentUser: post.likes.length > 0,
+        score: Number(scoreMap.get(post.id) ?? 0),
+        likes: undefined,
+        _count: undefined,
+      }))
+      .sort((a, b) => b.score - a.score || b.id - a.id);
+
     return res.status(200).json({
       posts: formatted,
       currentPage: page,

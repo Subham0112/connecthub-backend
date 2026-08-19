@@ -1,5 +1,17 @@
 import prisma from "../config/prisma.js";
 import type { Request, Response } from "express";
+import { io } from "../app.js";
+
+const emitToUser = (userId: number, event: string, payload: unknown) => {
+  io.to(`user_${userId}`).emit(event, payload);
+};
+
+const emitFriendRequestCount = async (userId: number) => {
+  const count = await prisma.friends.count({
+    where: { receiver_id: Number(userId), friend_status: "pending" },
+  });
+  emitToUser(Number(userId), "friend_request_count", count);
+};
 
 export const sendFriendRequest = async (req: Request, res: Response) => {
   const { receiverId } = req.params;
@@ -48,12 +60,30 @@ export const sendFriendRequest = async (req: Request, res: Response) => {
       }
     }
 
-    await prisma.friends.create({
+    const created = await prisma.friends.create({
       data: {
         sender_id: Number(userId),
         receiver_id: Number(receiverId),
       },
     });
+
+    const sender = await prisma.users.findUnique({
+      where: { id: Number(userId) },
+      select: { id: true, user_name: true, profile_url: true },
+    });
+
+    // Realtime: push the new request card to the receiver instantly
+    emitToUser(Number(receiverId), "friend_request_received", {
+      friends_id: created.friends_id,
+      sender_id: Number(userId),
+      receiver_id: Number(receiverId),
+      friend_status: "pending",
+      requested_at: created.requested_at,
+      req_sender: sender,
+    });
+    // Realtime: keep the receiver's badge count in sync
+    await emitFriendRequestCount(Number(receiverId));
+
     return res.status(200).json({
       message: "Friend Request Sent",
     });
@@ -88,6 +118,22 @@ export const acceptFriendRequest = async (req: Request, res: Response) => {
       },
     });
 
+    const accepter = await prisma.users.findUnique({
+      where: { id: Number(userId) },
+      select: { id: true, user_name: true, profile_url: true },
+    });
+
+    // Realtime: tell the sender their request was accepted
+    emitToUser(Number(senderId), "friend_request_accepted", {
+      friends_id: findRequest.friends_id,
+      sender_id: Number(senderId),
+      receiver_id: Number(userId),
+      accepted_by: Number(userId),
+      friend: accepter,
+    });
+    // Realtime: this request no longer counts as pending for the receiver's badge
+    await emitFriendRequestCount(Number(userId));
+
     return res.status(200).json({
       message: "Request Accepted Successfully",
     });
@@ -120,6 +166,15 @@ export const requestCancel = async (req: Request, res: Response) => {
         friends_id: requestExist.friends_id,
       },
     });
+
+    // Realtime: tell the receiver the pending request was withdrawn
+    emitToUser(Number(receiverId), "friend_request_cancelled", {
+      sender_id: Number(userId),
+      receiver_id: Number(receiverId),
+    });
+    // Realtime: receiver's badge count drops
+    await emitFriendRequestCount(Number(receiverId));
+
     return res.status(200).json({
       message: "Friend Request Cancelled",
     });
@@ -161,6 +216,18 @@ export const unfriendUser = async (req: Request, res: Response) => {
         friends_id: friendExists.friends_id,
       },
     });
+
+    // Realtime: tell the other person they were unfriended
+    const removedParty =
+      Number(friendExists.sender_id) === Number(userId)
+        ? Number(friendExists.receiver_id)
+        : Number(friendExists.sender_id);
+    emitToUser(removedParty, "friend_removed", {
+      user_id: Number(userId),
+      friend_id: removedParty,
+      friends_id: friendExists.friends_id,
+    });
+
     return res.status(200).json({
       message: "Unfriended Successfully",
     });
@@ -193,6 +260,14 @@ export const deletefriendRequest = async (req: Request, res: Response) => {
         friends_id: Number(requestExist.friends_id),
       },
     });
+
+    // Realtime: tell the sender their request was rejected
+    emitToUser(Number(senderId), "friend_request_rejected", {
+      sender_id: Number(senderId),
+      receiver_id: Number(userId),
+    });
+    // Realtime: receiver's badge count drops
+    await emitFriendRequestCount(Number(userId));
 
     return res.status(200).json({
       message: "Request Deleted Successfully",

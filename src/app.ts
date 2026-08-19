@@ -12,6 +12,7 @@ import { friendRouter } from "./routes/friends.route.js";
 import path from "path";
 import { fileURLToPath } from "url";
 import { messageRouter } from "./routes/message.route.js";
+import prisma from "./config/prisma.js";
 dotenv.config();
 
 const app:Express= express();
@@ -51,6 +52,13 @@ io.on("connection", (socket) => {
         id: Date.now(),
         is_read: false,
       })
+      // Realtime badge: push the receiver's fresh unread-conversation count
+      const unreadRows = await prisma.messages.findMany({
+        where: { receiver_id: Number(receiverId), is_read: false },
+        select: { sender_id: true },
+        distinct: ["sender_id"],
+      })
+      io.to(`user_${receiverId}`).emit("total_unread_count", unreadRows.length)
     } catch (err) {
       socket.emit("error", { message: "Message failed" })
     }
@@ -111,6 +119,9 @@ app.use("/",postRouter)
 app.use("/",messageRouter)
 app.use("/",friendRouter)
 
-app.listen(port, () => {
+// Important: Socket.IO is attached to `httpServer` (see top of file), so we
+// must start THAT server — `app.listen()` would create a second, separate
+// HTTP server that never runs Socket.IO.
+httpServer.listen(port, () => {
   console.log(`Server is running on port ${port}`);
 });

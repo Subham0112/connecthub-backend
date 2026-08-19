@@ -164,17 +164,31 @@ export const getTotalUnread = async (req: Request, res: Response) => {
   if (!userId) return res.status(401).json({ message: "User Not Authorized" });
 
   try {
-  const count = await prisma.messages.count({
-  where: { 
-    receiver_id: Number(userId), 
-    is_read: { not: true } 
+  // Count DISTINCT conversations with unread messages, not raw messages:
+  // 3 messages from the same person = 1 (badge shows one per chat, like FB)
+  const rows = await prisma.messages.findMany({
+  where: {
+    receiver_id: Number(userId),
+    is_read: { not: true },
   },
+  select: { sender_id: true },
+  distinct: ["sender_id"],
 });
-    return res.status(200).json({ count });
+    return res.status(200).json({ count: rows.length });
   } catch (err) {
     return res.status(500).json({ message: "Internal Server Error" });
   }
 };
+
+const getUnreadConversationCount = async (userId: number) => {
+  const rows = await prisma.messages.findMany({
+    where: { receiver_id: Number(userId), is_read: false },
+    select: { sender_id: true },
+    distinct: ["sender_id"],
+  });
+  return rows.length;
+};
+
 export const markMessagesRead = async (req: Request, res: Response) => {
   const userId = req.user?.userId;
   const { otherUserId } = req.params;
@@ -185,10 +199,23 @@ export const markMessagesRead = async (req: Request, res: Response) => {
     where: {
     sender_id: Number(otherUserId),
     receiver_id: Number(userId),
-    is_read: { not: true }, 
+    is_read: { not: true },
   },
   data: { is_read: true },
 });
+
+    // Realtime: push the fresh unread-conversation count to the reader's
+    // badge so the navbar updates instantly after opening a chat
+    const freshCount = await getUnreadConversationCount(Number(userId));
+    io.to(`user_${userId}`).emit("total_unread_count", freshCount);
+
+    // Realtime (authoritative): tell the SENDER their messages were seen,
+    // so their chat page flips "Sent" → "Seen" without waiting on the
+    // reader's own socket to emit back
+    io.to(`user_${Number(otherUserId)}`).emit("messages_read", {
+      readerId: Number(userId),
+    });
+
     return res.status(200).json({ message: "Marked as read" });
   } catch (err) {
     return res.status(500).json({ message: "Internal Server Error" });
