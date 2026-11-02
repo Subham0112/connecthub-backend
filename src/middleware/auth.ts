@@ -22,13 +22,3 @@ export const authAdmin=(req:Request,res:Response,next:NextFunction)=>{
 
     next();
 }
-
-export const authAdminOrSudoadmin= (req:Request,res:Response,next:NextFunction)=>{
-    const userRole=req.user?.role;
-    if(userRole!=='sudoadmin' && userRole!=='admin'){
-        return res.status(403).json({
-            message:"Only admin and sudoadmin can access this route"
-        })
-    }
-    next();
-}
