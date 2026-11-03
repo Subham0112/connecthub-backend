@@ -18,6 +18,7 @@ import prisma from "./config/prisma.js";
 dotenv.config();
 
 const app:Express= express();
+app.set("trust proxy", 1);
  const httpServer=createServer(app)
 
  export const io= new Server(httpServer,{

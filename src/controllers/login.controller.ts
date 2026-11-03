@@ -1,5 +1,5 @@
 
-import type { Request, Response } from "express";
+import type { CookieOptions, Request, Response } from "express";
 import bcrypt from "bcryptjs";
 import prisma from "../config/prisma.js";
 import fs from "fs"
@@ -20,6 +20,22 @@ const loginSchema = z.object({
   email: z.email("Invalid email address"),
   password: z.string().min(6, "Password must be at least 6 characters"),
 });
+
+const isProduction =
+  process.env.NODE_ENV === "production" 
+
+const authCookieOptions: CookieOptions = {
+  httpOnly: true,
+  secure: isProduction,
+  sameSite: isProduction ? "none" : "lax",
+  path: "/",
+};
+
+const clearAuthCookieOptions: CookieOptions = {
+  secure: isProduction,
+  sameSite: isProduction ? "none" : "lax",
+  path: "/",
+};
 
 
 
@@ -81,16 +97,8 @@ export const register = async (req:Request, res:Response)=>{
             data: { refresh_token: refreshToken }
         });
 
-        res.cookie("accesstoken",accessToken,{
-            httpOnly:true,
-            sameSite:"lax",
-            secure:false,
-        })
-        res.cookie("refreshtoken",refreshToken,{
-            httpOnly:true,
-            sameSite:"lax",
-            secure:false,
-        })
+        res.cookie("accesstoken", accessToken, authCookieOptions)
+        res.cookie("refreshtoken", refreshToken, authCookieOptions)
 
         res.status(201).json(
             {message:"User Registered Successfully",
@@ -159,16 +167,8 @@ export const login = async (req:Request ,res:Response )=>{
             data:{refresh_token: refreshToken}
         });
 
-        res.cookie("accesstoken",accessToken,{
-            httpOnly:true,
-            sameSite:"lax",
-            secure:false,
-        })
-        res.cookie("refreshtoken",refreshToken,{
-            httpOnly:true,
-            sameSite:"lax",
-            secure:false,
-        })
+        res.cookie("accesstoken", accessToken, authCookieOptions)
+        res.cookie("refreshtoken", refreshToken, authCookieOptions)
           res.json({
           message: "Login successful",
           user: { id: findUser.id, email: findUser.email, role:findUser.role,user_name:findUser.user_name },
@@ -305,11 +305,7 @@ export const refreshToken = async (req:Request,res:Response)=>{
             String(process.env.ACCESS_SECRET),
             {expiresIn:"1h"}
         )
-        res.cookie("accesstoken",newAccessToken,{
-             httpOnly:true,
-            sameSite:"lax",
-            secure:false,
-        });
+        res.cookie("accesstoken", newAccessToken, authCookieOptions);
         res.status(200).json({
             message: "Access token refreshed successfully"
         })  
@@ -501,8 +497,8 @@ export const passwordChange =async (req:Request,res:Response)=>{
         data:{password:hashedNewPassword},
         select:{id:true,user_name:true,email:true}
     })
-    res.clearCookie("refreshtoken");
-    res.clearCookie("accesstoken");
+    res.clearCookie("refreshtoken", clearAuthCookieOptions);
+    res.clearCookie("accesstoken", clearAuthCookieOptions);
      res.status(200).json({
         message:"Password Changed Successfully",
         user:updatePassword
@@ -516,8 +512,8 @@ export const passwordChange =async (req:Request,res:Response)=>{
 }
 
 export const logout= async (req:Request,res:Response)=>{
-    res.clearCookie("refreshtoken");
-    res.clearCookie("accesstoken");
+    res.clearCookie("refreshtoken", clearAuthCookieOptions);
+    res.clearCookie("accesstoken", clearAuthCookieOptions);
     res.status(200).json({message:"Logged out successfully"})
 }
 
@@ -633,8 +629,8 @@ export const deleteUser = async(req:Request,res:Response)=>{
                      await prisma.users.delete({
                         where:{id:user_id}
                      })
-        res.clearCookie("accesstoken"),
-        res.clearCookie("refreshtoken")
+        res.clearCookie("accesstoken", clearAuthCookieOptions);
+        res.clearCookie("refreshtoken", clearAuthCookieOptions);
         return res.status(200).json({
             message:"Successfully deleted users."
         })
@@ -658,9 +654,8 @@ export const logoutFromAll = async (req:Request, res:Response)=>{
             },refresh_token:""}
         })
 
-        res.clearCookie("accesstoken");
-        res.clearCookie("refreshtoken")
-       
+        res.clearCookie("accesstoken", clearAuthCookieOptions);
+        res.clearCookie("refreshtoken", clearAuthCookieOptions);
 
         return res.status(200).json({
             message:"Successfully Logout from all devices"
