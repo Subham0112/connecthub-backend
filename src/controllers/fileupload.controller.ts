@@ -2,12 +2,14 @@ import type { Request, Response } from "express";
 import prisma from "../config/prisma.js";
 import fs from "fs";
 import path from "path";
+import { getLikersByPostIds } from "../utils/postLikers.js";
 
 export const uploadPost = async (req: Request, res: Response) => {
   const { userId, content, visibility } = req.body;
   const user_id = Number(userId);
+  const files = (req.files as Express.Multer.File[] | undefined) ?? [];
 
-  if (!content && !req.file) {
+  if (!content && files.length === 0) {
     return res
       .status(400)
       .json({ message: "Post must have content or a file" });
@@ -18,33 +20,38 @@ export const uploadPost = async (req: Request, res: Response) => {
       data: { content: content ?? "", user_id: user_id, visiblity: visibility },
       include: { users: true, likes: true },
     });
-    let mediaCreate = null;
-    if (req.file) {
-      const { filename } = req.file;
-      const fileUrl = `${process.env.FILE_URL}/uploads/${filename}`;
-      mediaCreate = await prisma.media.create({
-        data: {
-          user_id: user_id,
-          filename,
-          file_url: fileUrl,
-          post_id: postCreate.id,
-        },
-      });
-    }
+
+    const mediaCreate = await Promise.all(
+      files.map((file) => {
+        const { filename } = file;
+        const fileUrl = `${process.env.FILE_URL}/uploads/${filename}`;
+        return prisma.media.create({
+          data: {
+            user_id: user_id,
+            filename,
+            file_url: fileUrl,
+            post_id: postCreate.id,
+          },
+        });
+      })
+    );
+
     res.status(200).json({
       message: "Post Created succesfully",
       file: mediaCreate,
       data: {
         ...postCreate,
-        media: mediaCreate ? [mediaCreate] : [],
+        media: mediaCreate,
         likeCount: 0,
         commentCount: 0,
         likedByCurrentUser: false,
+        likers: [],
         likes: undefined,
       },
     });
   } catch (err) {
     console.log(err);
+    return res.status(500).json({ message: "Internal Server Error" });
   }
 };
 
@@ -61,10 +68,13 @@ export const getUsersPostWithFiles = async (req: Request, res: Response) => {
              likes: { where: { user_id: Number(viewerId) },
               select: { user_id: true } 
             } 
-        } 
+        },
+        orderBy: [{ created_at: "desc" }, { id: "desc" }],
     })
+         const likersMap = await getLikersByPostIds(posts.map((post) => post.id))
          const formatted = posts.map(post => ({ ...post, likeCount: post._count.likes, commentCount:post._count.comments,
              likedByCurrentUser: post.likes.length > 0,
+             likers: likersMap.get(post.id) ?? [],
               likes: undefined,
                _count: undefined })
             )
@@ -159,12 +169,15 @@ export const getAllPost = async (req: Request, res: Response) => {
       prisma.posts.count({ where: { visiblity: "all" } }),
     ]);
 
+    const likersMap = await getLikersByPostIds(posts.map((post) => post.id));
+
     const formatted = posts
       .map((post) => ({
         ...post,
         likeCount: post._count.likes,
         commentCount: post._count.comments,
         likedByCurrentUser: post.likes.length > 0,
+        likers: likersMap.get(post.id) ?? [],
         score: Number(scoreMap.get(post.id) ?? 0),
         likes: undefined,
         _count: undefined,

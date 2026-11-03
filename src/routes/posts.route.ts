@@ -9,7 +9,7 @@ import upload from "../multer.js";
 
 export const postRouter=Router()
 
-postRouter.post("/upload-file",upload.single("file"),uploadPost)
+postRouter.post("/upload-file",upload.array("file", 10),uploadPost)
 postRouter.get("/get-post/:id",verifyToken, getUsersPostWithFiles)
 postRouter.get("/get-all-posts",verifyToken,getAllPost)
 postRouter.get("/getLikes/:postId",verifyToken,getAllLikedUser)

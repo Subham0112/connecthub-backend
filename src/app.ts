@@ -12,6 +12,8 @@ import { friendRouter } from "./routes/friends.route.js";
 import path from "path";
 import { fileURLToPath } from "url";
 import { messageRouter } from "./routes/message.route.js";
+import { searchRouter } from "./routes/search.route.js";
+import { notificationRouter } from "./routes/notification.route.js";
 import prisma from "./config/prisma.js";
 dotenv.config();
 
@@ -85,6 +87,16 @@ io.on("connection", (socket) => {
     }
   })
 
+  socket.on("notification_read", async (data) => {
+    const userId = Number(data?.userId);
+    if (!Number.isFinite(userId)) return;
+    await prisma.notifications.updateMany({
+      where: { recipient_id: userId, is_read: false },
+      data: { is_read: true },
+    });
+    io.to(`user_${userId}`).emit("notification_count", 0);
+  });
+
   socket.on("disconnect", () => {
     // Remove only this specific socket from all user entries
     for (const [userId, sockets] of userSocketMap.entries()) {
@@ -118,6 +130,8 @@ app.use("/",userRouter)
 app.use("/",postRouter)
 app.use("/",messageRouter)
 app.use("/",friendRouter)
+app.use("/",searchRouter)
+app.use("/",notificationRouter)
 
 // Important: Socket.IO is attached to `httpServer` (see top of file), so we
 // must start THAT server — `app.listen()` would create a second, separate

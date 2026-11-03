@@ -1,5 +1,9 @@
 import type { Request,Response } from "express";
 import prisma from "../config/prisma.js";
+import {
+    emitNotification,
+    emitNotificationRemoved,
+} from "../utils/notification.js";
 
 
 export const postComment = async (req:Request,res:Response)=>{
@@ -28,6 +32,24 @@ export const postComment = async (req:Request,res:Response)=>{
         data:{comment,user_id:Number(userId),post_id:Number(post_id)},
         include:{users:true,posts:true}
     })
+
+    try {
+        if (findPost.user_id && Number(findPost.user_id) !== Number(userId)) {
+            const notification = await prisma.notifications.create({
+                data: {
+                    recipient_id: Number(findPost.user_id),
+                    actor_id: Number(userId),
+                    type: "comment",
+                    post_id: Number(post_id),
+                    comment_id: postComment.id,
+                    message: comment.trim(),
+                },
+            })
+            await emitNotification(notification.id)
+        }
+    } catch (err) {
+        console.log("Error creating comment notification", err)
+    }
    
     return res.status(200).json({
         message:"Comment Posted Successfully",
@@ -97,9 +119,28 @@ export const deleteComment = async (req: Request, res: Response) => {
             return res.status(403).json({ message: "Not authorized to delete this comment" })
         }
 
+        const relatedNotifications = await prisma.notifications.findMany({
+            where: { comment_id: Number(commentId), type: "comment" },
+            select: { id: true, recipient_id: true },
+        })
+
         await prisma.comments.delete({
             where: { id: Number(commentId) }
         })
+
+        try {
+            if (relatedNotifications.length > 0) {
+                await prisma.notifications.deleteMany({
+                    where: { id: { in: relatedNotifications.map((item) => item.id) } },
+                })
+                for (const item of relatedNotifications) {
+                    await emitNotificationRemoved(item.id, item.recipient_id)
+                }
+            }
+        } catch (err) {
+            console.log("Error removing comment notification", err)
+        }
+
         res.status(200).json({ message: "Successfully Deleted Comments" })
 
     } catch (err) {
