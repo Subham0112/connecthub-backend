@@ -1,5 +1,5 @@
 import express from "express";
-import type { Express} from "express";
+import type { Express, NextFunction, Request, Response } from "express";
 import "reflect-metadata";
 import { createServer } from "http"; 
 import { Server } from "socket.io";  
@@ -15,6 +15,7 @@ import { messageRouter } from "./routes/message.route.js";
 import { searchRouter } from "./routes/search.route.js";
 import { notificationRouter } from "./routes/notification.route.js";
 import prisma from "./config/prisma.js";
+import { ensureStorageBucket } from "./config/supabase.js";
 dotenv.config();
 
 const app:Express= express();
@@ -126,6 +127,7 @@ const port = Number(process.env.PORT) || 3000;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Legacy: serve media uploaded before the Supabase migration.
 app.use("/uploads", express.static(path.join(__dirname, "../src/uploads")))
 app.use("/",userRouter)
 app.use("/",postRouter)
@@ -133,6 +135,28 @@ app.use("/",messageRouter)
 app.use("/",friendRouter)
 app.use("/",searchRouter)
 app.use("/",notificationRouter)
+
+// Turn multer/upload errors into clean 400 responses instead of crashes
+app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  const error = err as { name?: string; code?: string; message?: string };
+  if (error?.name === "MulterError") {
+    const message =
+      error.code === "LIMIT_FILE_SIZE"
+        ? "File is too large (max 25MB per file)"
+        : error.message || "File upload failed";
+    return res.status(400).json({ message });
+  }
+  if (error?.message?.includes("Only image and video files are allowed")) {
+    return res.status(400).json({ message: error.message });
+  }
+  console.error("Unhandled error:", err);
+  return res.status(500).json({ message: "Internal Server Error" });
+});
+
+// Ensure the Supabase Storage bucket exists before accepting uploads.
+ensureStorageBucket().catch((err) =>
+  console.error("[supabase] Bucket initialization failed:", err)
+);
 
 // Important: Socket.IO is attached to `httpServer` (see top of file), so we
 // must start THAT server — `app.listen()` would create a second, separate

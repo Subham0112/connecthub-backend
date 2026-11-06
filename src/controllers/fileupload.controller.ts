@@ -1,13 +1,19 @@
 import type { Request, Response } from "express";
 import prisma from "../config/prisma.js";
-import fs from "fs";
-import path from "path";
 import { getLikersByPostIds } from "../utils/postLikers.js";
+import {
+  uploadFileToStorage,
+  deleteFileFromStorage,
+} from "../utils/storage.js";
 
 export const uploadPost = async (req: Request, res: Response) => {
   const { userId, content, visibility } = req.body;
   const user_id = Number(userId);
   const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+
+  if (!Number.isInteger(user_id) || user_id <= 0) {
+    return res.status(400).json({ message: "A valid userId is required" });
+  }
 
   if (!content && files.length === 0) {
     return res
@@ -15,33 +21,41 @@ export const uploadPost = async (req: Request, res: Response) => {
       .json({ message: "Post must have content or a file" });
   }
 
-  try {
-    const postCreate = await prisma.posts.create({
-      data: { content: content ?? "", user_id: user_id, visiblity: visibility },
-      include: { users: true, likes: true },
-    });
+  const uploaded: { path: string; url: string }[] = [];
 
-    const mediaCreate = await Promise.all(
-      files.map((file) => {
-        const { filename } = file;
-        const fileUrl = `${process.env.FILE_URL}/uploads/${filename}`;
-        return prisma.media.create({
-          data: {
-            user_id: user_id,
-            filename,
-            file_url: fileUrl,
-            post_id: postCreate.id,
-          },
-        });
-      })
+  try {
+    // 1) Stream every file to Supabase Storage
+    uploaded.push(
+      ...(await Promise.all(
+        files.map((file) => uploadFileToStorage(file, "posts", user_id))
+      ))
     );
+
+    // 2) Persist the post + its media rows atomically
+    const postCreate = await prisma.posts.create({
+      data: {
+        content: content ?? "",
+        user_id: user_id,
+        visiblity: visibility,
+        ...(uploaded.length > 0 && {
+          media: {
+            create: uploaded.map((file) => ({
+              user_id: user_id,
+              filename: file.path,
+              file_url: file.url,
+            })),
+          },
+        }),
+      },
+      include: { users: true, likes: true, media: true },
+    });
 
     res.status(200).json({
       message: "Post Created succesfully",
-      file: mediaCreate,
+      file: postCreate.media,
       data: {
         ...postCreate,
-        media: mediaCreate,
+        media: postCreate.media,
         likeCount: 0,
         commentCount: 0,
         likedByCurrentUser: false,
@@ -50,6 +64,8 @@ export const uploadPost = async (req: Request, res: Response) => {
       },
     });
   } catch (err) {
+    // Roll back any files that were uploaded before the failure
+    await Promise.all(uploaded.map((file) => deleteFileFromStorage(file.path)));
     console.log(err);
     return res.status(500).json({ message: "Internal Server Error" });
   }
@@ -256,13 +272,10 @@ export const deletePost = async (req: Request, res: Response) => {
       where: { id: findPost.id },
     });
 
-    findFile.forEach((file) => {
-      if (!file.filename) return;
-      const filePath = path.join("src/uploads", file.filename);
-      fs.unlink(filePath, (err) => {
-        if (err) console.error("Error deleting from local:", err);
-      });
-    });
+    await Promise.all(
+      findFile.map((file) => deleteFileFromStorage(file.filename))
+    );
+
     res.status(200).json({
       message: "File Deleted Successfully",
     });

@@ -2,12 +2,16 @@
 import type { CookieOptions, Request, Response } from "express";
 import bcrypt from "bcryptjs";
 import prisma from "../config/prisma.js";
-import fs from "fs"
-import path from "path";
 import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
 import dotenv from "dotenv";
 import { z } from "zod";
+import {
+  uploadFileToStorage,
+  deleteFileFromStorage,
+  deleteUserFiles,
+  getStoragePathFromUrl,
+} from "../utils/storage.js";
 
 const registerSchema = z.object({
   name: z.string().min(2, "Name is required"),
@@ -184,7 +188,7 @@ export const login = async (req:Request ,res:Response )=>{
 
 export const uploadProfile = async (req: Request, res: Response) => {
   try {
-    const userId = req.user?.userId;
+    const userId = Number(req.user?.userId);
     if (!userId) {
       return res.status(401).json({ message: "Unauthorised" });
     }
@@ -193,13 +197,33 @@ export const uploadProfile = async (req: Request, res: Response) => {
       return res.status(400).json({ message: "No file uploaded" });
     }
 
-    const filename = req.file.filename;
-    const profile_url = `${process.env.FILE_URL}/uploads/${filename}`;
-
-    await prisma.users.update({
-      where: { id: Number(userId) },
-      data: { profile_url },
+    const existingUser = await prisma.users.findUnique({
+      where: { id: userId },
+      select: { profile_url: true },
     });
+    if (!existingUser) {
+      return res.status(404).json({ message: "User Not Found" });
+    }
+
+    const { path: objectPath, url: profile_url } = await uploadFileToStorage(
+      req.file,
+      "profiles",
+      userId
+    );
+
+    try {
+      await prisma.users.update({
+        where: { id: userId },
+        data: { profile_url },
+      });
+    } catch (err) {
+      // Do not leave an orphaned object behind if the DB update fails
+      await deleteFileFromStorage(objectPath);
+      throw err;
+    }
+
+    // Clean up the previous avatar (only if it lives in Supabase Storage)
+    await deleteFileFromStorage(getStoragePathFromUrl(existingUser.profile_url));
 
     return res.status(200).json({
       message: "Profile picture updated successfully",
@@ -537,23 +561,7 @@ export const deleteUser = async(req:Request,res:Response)=>{
       
         try{
               if(requestedRole==="sudoadmin"){
-            const fileFind=await prisma.media.findMany({
-                where:{user_id},
-            })
-              
-        
-
-           for (const file of fileFind) {
-                 const filePath = path.join("src/uploads", file.filename??"");
-
-                fs.unlink(filePath, (err) => {
-                 if (err) {
-                 console.log("File delete error:", err.message);
-                     } else {
-                    console.log("Deleted:", file.filename);
-                 }
-                  });
-                     }   
+                     await deleteUserFiles(user_id);
                      await prisma.users.deleteMany({
                         where:{id:user_id}
                      })
@@ -582,22 +590,7 @@ export const deleteUser = async(req:Request,res:Response)=>{
                     message:"Admin can delete only regular users"
                 })
             }
-            const fileFind=await prisma.media.findMany({
-                where:{user_id}
-            })
-        
-
-           for (const file of fileFind) {
-                 const filePath = path.join("src/uploads", file.filename??"");
-
-                fs.unlink(filePath, (err) => {
-                 if (err) {
-                 console.log("File delete error:", err.message);
-                     } else {
-                    console.log("Deleted:", file.filename);
-                 }
-                  });
-                     }   
+            await deleteUserFiles(user_id);
             await prisma.users.delete({
                 where:{id:user_id}
             })
@@ -611,21 +604,7 @@ export const deleteUser = async(req:Request,res:Response)=>{
                 error:"Users can delete their own account"
             })
         }
-        const fileFind=await prisma.media.findMany({
-            where:{user_id}
-        })
-          
-           for (const file of fileFind) {
-                 const filePath = path.join("src/uploads", file.filename ?? "");
-
-                fs.unlink(filePath, (err) => {
-                 if (err) {
-                 console.log("File delete error:", err.message);
-                     } else {
-                    console.log("Deleted:", file.filename);
-                 }
-                  });
-                     }   
+        await deleteUserFiles(user_id);
                      await prisma.users.delete({
                         where:{id:user_id}
                      })
